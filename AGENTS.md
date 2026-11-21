@@ -9,19 +9,19 @@ Rules for any human or AI agent changing this repo. `SPEC.md` is the contract an
 - Definition of done for every step:
   `gofmt -l . | wc -l` == 0, `go vet ./...` clean, `go test -race -count=1 ./...` green, and
   `go test -race -count=1 -tags=integration ./internal/integration/...` green against native Postgres. Commit, push, and confirm GitHub Actions is green.
-- Local Postgres is **native** PostgreSQL 16 (`apt install postgresql-16`). Do not assume Docker is available. Integration tests read `TEST_DATABASE_URL`, e.g. `postgres://jobq:jobq@localhost:5432/jobq?sslmode=disable`.
+- Local Postgres is **native** PostgreSQL 18 from the PGDG apt repo (`apt.postgresql.org`, `noble-pgdg`, `apt install postgresql-18`; Ubuntu 24.04 itself only ships 16). Do not assume Docker is available. Integration tests read `TEST_DATABASE_URL`, e.g. `postgres://jobq:jobq@localhost:5432/jobq?sslmode=disable`.
 - Commits are small and imperative (`store: add fenced completion`). Never commit secrets, `.env`, or binaries.
 
 ## 1. Pinned Versions (do not change without approval)
 
 | Item | Pin |
 |---|---|
-| Go | `go 1.22.0` in `go.mod`; CI `actions/setup-go` with `go-version: '1.22.x'` |
-| `github.com/jackc/pgx/v5` | `v5.7.4` |
+| Go | **1.22.2**: target was 1.27, capped at the local toolchain (`go1.22.2`). `go 1.22.2` in `go.mod`; CI `actions/setup-go` with `go-version-file: go.mod`; Dockerfile `golang:1.22.2-bookworm`. All three must change together |
+| `github.com/jackc/pgx/v5` | `v5.7.4` (requires Go ≥ 1.21) |
 | `github.com/robfig/cron/v3` | `v3.0.1` |
 | `github.com/google/uuid` | `v1.6.0` |
-| Postgres | 16 (native local, `postgres:16` CI/compose, DO Dev DB `version: "16"`) |
-| Builder / runtime images | `golang:1.22-bookworm` / `gcr.io/distroless/static-debian12:nonroot` |
+| Postgres | **18** (native local via PGDG, `postgres:18` CI/compose, DO Dev DB `version: "18"`; App Platform's max is 18) |
+| Builder / runtime images | `golang:1.22.2-bookworm` / `gcr.io/distroless/static-debian12:nonroot` |
 
 **No other modules.** That means no chi, testify, ORMs, migration frameworks, Prometheus client, `x/sync`, or viper. Use stdlib (`testing`, `net/http`, `log/slog`, `embed`, `sync`, `crypto/sha256`). Adding a module needs explicit approval and a `SPEC.md` update.
 

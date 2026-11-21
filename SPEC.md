@@ -6,7 +6,7 @@ Status: **DRAFT v1 — awaiting approval**. This document is the contract. Code,
 
 ## 1. Scope
 
-A REST service that accepts jobs, persists them in PostgreSQL 16, and executes them on horizontally scaled worker containers with at-least-once semantics, bounded retries, a dead-letter queue (DLQ), cron schedules, and queue observability.
+A REST service that accepts jobs, persists them in PostgreSQL 18, and executes them on horizontally scaled worker containers with at-least-once semantics, bounded retries, a dead-letter queue (DLQ), cron schedules, and queue observability.
 
 One Go binary, two modes:
 
@@ -25,14 +25,14 @@ The subcommand argument wins over `MODE` when both are set. Both modes run migra
 
 | Concern | Choice |
 |---|---|
-| Language | Go **1.22** (`go 1.22.0` in `go.mod`), `CGO_ENABLED=0` |
+| Language | Go **1.22.2**, `CGO_ENABLED=0`. Target was Go 1.27, capped at the local toolchain (`go version` → go1.22.2). The same version is pinned in `go.mod` (`go 1.22.2`), the Dockerfile (`golang:1.22.2-bookworm`), and CI (`go-version-file: go.mod`) |
 | HTTP | stdlib `net/http` with Go 1.22 method+pattern routing (`mux.HandleFunc("POST /v1/jobs/{id}/cancel", …)`) — **no chi** |
 | DB driver | `github.com/jackc/pgx/v5 v5.7.4` + `pgxpool` |
 | Cron | `github.com/robfig/cron/v3 v3.0.1` (`cron.ParseStandard`: 5-field + `@every`/`@hourly` descriptors, UTC) |
 | IDs | `github.com/google/uuid v1.6.0` (`uuid.NewV7()` for B-tree locality) |
 | Logging | `log/slog` JSON handler to stdout |
 | Metrics | Hand-written Prometheus text exposition (v0.0.4) — no client library |
-| DB | PostgreSQL **16** (native locally, `postgres:16` in CI/compose, DO Dev Database v16 in prod) |
+| DB | PostgreSQL **18** (native locally via the PGDG apt repo, `postgres:18` in CI/compose, DO Dev Database `version: "18"` in prod). The schema uses no PG18-only features (UUIDs are generated in Go), so it also runs on PG 16/17 |
 
 ---
 
@@ -630,16 +630,16 @@ Invalid config → log one JSON error line and exit 1 before opening the DB.
 14. cron no double-fire with 4 concurrent schedulers (I7)
 15. migrations idempotent (run twice, concurrently)
 
-**CI** (`.github/workflows/ci.yml`, on every push and PR): `postgres:16` service with health check → `gofmt -l` must be empty → `go vet ./...` → unit tests → integration tests → `go build` → `docker build` (verifies the Dockerfile).
+**CI** (`.github/workflows/ci.yml`, on every push and PR): `postgres:18` service with health check (`actions/setup-go` with `go-version-file: go.mod`) → `gofmt -l` must be empty → `go vet ./...` → unit tests → integration tests → `go build` → `docker build` (verifies the Dockerfile).
 
 ---
 
 ## 13. Deployment (DigitalOcean App Platform)
 
-`.do/app.yaml`: region `blr`. `services.api` (Dockerfile, `http_port: 8080`, `health_check.http_path: /readyz`, env `MODE=api`). `workers.worker` (same Dockerfile, env `MODE=worker`, `instance_count: 2`). `databases.db` (`engine: PG`, `version: "16"`, `production: false`). Both components get `DATABASE_URL=${db.DATABASE_URL}` and `termination.grace_period_seconds: 60`. API and workers scale independently by changing `instance_count` and running `doctl apps update <id> --spec .do/app.yaml`. `GET /v1/queue/stats.active_workers` reflects the change within one heartbeat interval.
+`.do/app.yaml`: region `blr`. `services.api` (Dockerfile, `http_port: 8080`, `health_check.http_path: /readyz`, env `MODE=api`). `workers.worker` (same Dockerfile, env `MODE=worker`, `instance_count: 2`). `databases.db` (`engine: PG`, `version: "18"`, `production: false`; App Platform supports up to PG 18). Both components get `DATABASE_URL=${db.DATABASE_URL}` and `termination.grace_period_seconds: 60`. API and workers scale independently by changing `instance_count` and running `doctl apps update <id> --spec .do/app.yaml`. `GET /v1/queue/stats.active_workers` reflects the change within one heartbeat interval.
 
 **Known risks:**
 - Dev DBs have a low `max_connections`. Pool defaults are sized for 1 API + 2–3 workers.
-- Dev DBs on PG15+ can reject `CREATE` on schema `public`. The fallback is `DB_SCHEMA=jobq`; if that also fails, attach a managed PG16 cluster.
+- Dev DBs on PG15+ can reject `CREATE` on schema `public`. The fallback is `DB_SCHEMA=jobq`; if that also fails, attach a managed PG18 cluster.
 
-**Docker:** multi-stage. `golang:1.22-bookworm` builder (`-trimpath -ldflags "-s -w -X main.version=$VERSION"`) → `gcr.io/distroless/static-debian12:nonroot`. `ENTRYPOINT ["/jobq"]`; the mode comes from env. `docker-compose.yml` runs `postgres:16`, `api`, and `worker` (`deploy.replicas: 2`).
+**Docker:** multi-stage. `golang:1.22.2-bookworm` builder (`-trimpath -ldflags "-s -w -X main.version=$VERSION"`) → `gcr.io/distroless/static-debian12:nonroot`. `ENTRYPOINT ["/jobq"]`; the mode comes from env. `docker-compose.yml` runs `postgres:18`, `api`, and `worker` (`deploy.replicas: 2`). The PG18 image stores data at `/var/lib/postgresql/18/docker`, so the compose volume mounts `/var/lib/postgresql` (not `/var/lib/postgresql/data`).
