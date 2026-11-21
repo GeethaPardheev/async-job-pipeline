@@ -12,10 +12,11 @@ One Go binary, two modes:
 
 | Mode | Command | Role | DO App Platform component |
 |---|---|---|---|
-| `MODE=api` | `jobq api` | Control plane: HTTP API, validation, idempotency, stats, drain/cancel, schedules CRUD, DLQ replay | `services: api` (HTTP, public route) |
-| `MODE=worker` | `jobq worker` | Data plane: poller, executor, retries, lease reaper, cron tick loop, heartbeats | `workers: worker` (no route, `instance_count: 2`) |
+| `MODE=api` | `server api` | Control plane: HTTP API, validation, idempotency, stats, drain/cancel, schedules CRUD, DLQ replay | `services: api` (HTTP, public route) |
+| `MODE=worker` | `server worker` | Data plane: poller, executor, retries, lease reaper, cron tick loop, heartbeats | `workers: worker` (no route, `instance_count: 2`) |
+| `MODE=migrate` | `server migrate` | One-shot: apply migrations and exit 0 (CI and manual ops) | optional pre-deploy job |
 
-The subcommand argument wins over `MODE` when both are set. Both modes run migrations on startup (idempotent, advisory-locked).
+The subcommand argument wins over `MODE` when both are set. `api` and `worker` also run migrations on startup unless `MIGRATE_ON_START=false` (idempotent, advisory-locked).
 
 **Non-goals (v1):** multi-tenant auth/RBAC (one optional shared bearer token only), job retention/archival, `LISTEN/NOTIFY` wakeups, job dependencies/DAGs, exactly-once side effects.
 
@@ -39,7 +40,7 @@ The subcommand argument wins over `MODE` when both are set. Both modes run migra
 ## 3. Repository Layout
 
 ```
-cmd/jobq/main.go                  # mode dispatch, signal handling, wiring
+cmd/server/main.go                # mode dispatch, signal handling, wiring
 internal/config/                  # env parsing + validation (fail fast)
 internal/domain/                  # Job/Status/Attempt types, transition table, ErrPermanent
 internal/store/                   # pgxpool, migrations (embed.FS), all SQL, fenced transitions
@@ -129,7 +130,7 @@ Defaults: `BACKOFF_BASE=1s`, `BACKOFF_CAP=5m` (so the max delay is < 10m). The r
 
 ## 5. PostgreSQL Schema (`internal/store/migrations/0001_init.sql`)
 
-Migrations: `embed.FS`, applied in version order inside `pg_advisory_lock(727274001)` held on a dedicated connection; each file runs in its own transaction and is recorded in `schema_migrations`. DDL also uses `IF NOT EXISTS`. **Never `CREATE DATABASE`.** Optional `DB_SCHEMA` (default `public`): if it isn't `public`, run `CREATE SCHEMA IF NOT EXISTS` and set `search_path` via pgx `RuntimeParams`. This exists for test isolation and as a fallback if the DO Dev DB rejects writes to `public`.
+Migrations: `embed.FS`, applied in version order inside `pg_advisory_lock(727274001, hashtext(<schema>))` held on a dedicated connection (per-schema key, so replicas sharing a schema serialize while isolated test schemas migrate in parallel); each file runs in its own transaction and is recorded in `schema_migrations`. DDL also uses `IF NOT EXISTS`. **Never `CREATE DATABASE`.** Optional `DB_SCHEMA` (default `public`): if it isn't `public`, run `CREATE SCHEMA IF NOT EXISTS` and set `search_path` via pgx `RuntimeParams`. This exists for test isolation and as a fallback if the DO Dev DB rejects writes to `public`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -383,7 +384,7 @@ The draining check (`SELECT draining FROM queue_state`) runs first. A submit tha
 
 ## 8. HTTP API
 
-Base path `/v1`. JSON bodies only (`Content-Type: application/json`). Unknown fields → 400. Max body 1 MiB, max `payload` 256 KiB. Every response carries `X-Request-ID` (echoed if the client sent one). If `API_TOKEN` is set, `/v1/*` requires `Authorization: Bearer <token>` (401 otherwise). `/healthz`, `/readyz`, and `/metrics` stay open.
+Base path `/v1`. JSON bodies only (`Content-Type: application/json`). Unknown fields → 400. Max body 1 MiB, max `payload` 256 KiB. Every response carries `X-Request-ID` (echoed if the client sent one). If `API_TOKEN` is set, `/v1/*` requires `Authorization: Bearer <token>` (401 otherwise). **`/healthz` and `/readyz` MUST bypass `API_TOKEN` auth** so DigitalOcean App Platform health checks never get a 401. Auth applies only to the `/v1` prefix, so `/metrics` is also open. A unit test enforces this.
 
 **Error envelope** (all 4xx/5xx):
 
@@ -642,4 +643,4 @@ Invalid config → log one JSON error line and exit 1 before opening the DB.
 - Dev DBs have a low `max_connections`. Pool defaults are sized for 1 API + 2–3 workers.
 - Dev DBs on PG15+ can reject `CREATE` on schema `public`. The fallback is `DB_SCHEMA=jobq`; if that also fails, attach a managed PG18 cluster.
 
-**Docker:** multi-stage. `golang:1.22.2-bookworm` builder (`-trimpath -ldflags "-s -w -X main.version=$VERSION"`) → `gcr.io/distroless/static-debian12:nonroot`. `ENTRYPOINT ["/jobq"]`; the mode comes from env. `docker-compose.yml` runs `postgres:18`, `api`, and `worker` (`deploy.replicas: 2`). The PG18 image stores data at `/var/lib/postgresql/18/docker`, so the compose volume mounts `/var/lib/postgresql` (not `/var/lib/postgresql/data`).
+**Docker:** multi-stage. `golang:1.22.2-bookworm` builder (`-trimpath -ldflags "-s -w -X main.version=$VERSION"`) → `gcr.io/distroless/static-debian12:nonroot`. `ENTRYPOINT ["/server"]`; the mode comes from env. `docker-compose.yml` runs `postgres:18`, `api`, and `worker` (`deploy.replicas: 2`). The PG18 image stores data at `/var/lib/postgresql/18/docker`, so the compose volume mounts `/var/lib/postgresql` (not `/var/lib/postgresql/data`).

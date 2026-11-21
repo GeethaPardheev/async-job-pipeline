@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: jobq
+      POSTGRES_PASSWORD: jobq
+      POSTGRES_DB: jobq
+    ports:
+      - "5432:5432"
+    volumes:
+      # PG18 images keep data under /var/lib/postgresql/18/docker; mount the parent.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobq -d jobq"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: .
+    environment:
+      MODE: api
+      DATABASE_URL: postgres://jobq:jobq@postgres:5432/jobq?sslmode=disable
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    environment:
+      MODE: worker
+      DATABASE_URL: postgres://jobq:jobq@postgres:5432/jobq?sslmode=disable
+      WORKER_CONCURRENCY: "8"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      replicas: 2
+
+volumes:
+  pgdata:

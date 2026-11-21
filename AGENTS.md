@@ -30,7 +30,7 @@ Rules for any human or AI agent changing this repo. `SPEC.md` is the contract an
 - `internal/domain`: pure types, status constants, transition table, `ErrPermanent` / `Permanent(err)`. No I/O, no imports from other internal packages.
 - `internal/store`: the **only** package that contains SQL or imports pgx. It exposes intent-named methods (`ClaimJobs`, `CompleteJob`, `RetryJob`, `FailJob`, `DeadLetterJob`, `ReapExpiredLeases`, `TickSchedules`, …), not generic query helpers.
 - `internal/controlplane` and `internal/dataplane` depend on `store` and `domain`, never on each other.
-- `cmd/jobq` only wires things together. No business logic.
+- `cmd/server` only wires things together. No business logic.
 - No package-level mutable state. The handler registry is built in `main` and passed in. No `init()` side effects.
 
 ## 3. Context & Timeouts (everywhere)
@@ -130,6 +130,7 @@ A missed or duplicated shutdown step must never corrupt state. The lease reaper 
 
 ## 11. Security & Ops Hygiene
 
+- The DigitalOcean token lives **only** in `/workspaces/.secrets/digitalocean.env` (outside the repo, mode 600). Always `source` it to get `DIGITALOCEAN_ACCESS_TOKEN`. Never copy the value into files, commands or commits, and never recall it from memory.
 - Secrets come only from env (`DATABASE_URL`, `API_TOKEN`). Never log them. Redact the DSN password in startup logs.
 - The container runs as distroless `nonroot`. No shell, no package manager.
 - `http_webhook`: http/https only, capped body read, bounded redirects. Document SSRF exposure in the README and recommend setting `API_TOKEN` on public deployments.
