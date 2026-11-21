@@ -8,20 +8,20 @@ A production-style async job queue REST API in Go 1.22 that uses **PostgreSQL 18
 
 ```mermaid
 flowchart LR
-    submit([POST /v1/jobs<br/>Idempotency-Key + body hash]) --> queued
-    queued -->|"claim: FOR UPDATE SKIP LOCKED<br/>attempt_count++, lease set"| running
-    queued -->|"cancel / drain cancel_pending"| cancelled([cancelled])
-    running -->|success| succeeded([succeeded])
-    running -->|permanent error| failed([failed])
+    submit(["POST /v1/jobs<br/>Idempotency-Key + body hash"]) --> queued(["queued"])
+    queued -->|"claim: FOR UPDATE SKIP LOCKED<br/>attempt_count++, lease set"| running(["running"])
+    queued -->|"cancel / drain cancel_pending"| cancelled(["cancelled"])
+    running -->|"success"| succeeded(["succeeded"])
+    running -->|"permanent error"| failed(["failed"])
     running -->|"transient error / timeout<br/>attempt_count ≤ max_retries"| backoff["backoff d + U[0,d)<br/>d = min(cap, base·2^(attempt−1))"]
-    backoff -->|run_at = now() + delay| queued
-    running -->|"lease expired (worker crash)"| reaper{{lease reaper}}
-    reaper -->|retries left| backoff
-    reaper -->|retries exhausted| dlq
-    running -->|"retries exhausted"| dlq([dead-lettered])
-    dlq --> dlt[(dead_letter_jobs)]
-    dlt -->|"POST /v1/dlq/{id}/replay<br/>(idempotent: dlq-replay:&lt;id&gt;)"| queued
-    running -.->|"every write fenced on<br/>(id, status='running', attempt_count, worker_id)<br/>0 rows → ErrFenceLost, attempt marked fenced"| fence{{fencing guard}}
+    backoff -->|"run_at = now() + delay"| queued
+    running -->|"lease expired (worker crash)"| reaper{{"lease reaper"}}
+    reaper -->|"retries left"| backoff
+    reaper -->|"retries exhausted"| dlq(["dead-lettered"])
+    running -->|"retries exhausted"| dlq
+    dlq --> dlt[("dead_letter_jobs")]
+    dlt -->|"POST /v1/dlq/{id}/replay<br/>idempotent key dlq-replay:job_id"| queued
+    running -.->|"every write fenced on<br/>(id, status='running', attempt_count, worker_id)<br/>0 rows → ErrFenceLost, attempt marked fenced"| fence{{"fencing guard"}}
 ```
 
 Statuses are exactly `queued`, `running`, `succeeded`, `failed`, `dead-lettered`, `cancelled`. The contract lives in [`SPEC.md`](SPEC.md) and the engineering rules in [`AGENTS.md`](AGENTS.md).
