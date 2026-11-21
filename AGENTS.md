@@ -105,7 +105,7 @@ A missed or duplicated shutdown step must never corrupt state. The lease reaper 
 ## 8. HTTP Conventions
 
 - Routing uses Go 1.22 `http.ServeMux` patterns (`"GET /v1/jobs/{id}"`, `r.PathValue("id")`).
-- Middleware order: request-ID → panic recover → access log (slog: `method, route, status, duration_ms, request_id`) → bearer auth (if `API_TOKEN`) → body limit (1 MiB) → handler.
+- Middleware order: request-ID → panic recover → access log (slog: `request_id, method, path, route, status, latency_ms`; `route` is the mux pattern without its method, which is also the `jobq_http_requests_total` label) → bearer auth (if `API_TOKEN`) → body limit (1 MiB) → handler.
 - Decode JSON with `json.NewDecoder` + `DisallowUnknownFields()`, and reject trailing data.
 - Responses go through `writeJSON(w, status, v)` / `writeError(w, status, code, msg)` only. Errors use the envelope in SPEC §8.
 - Validation lives in `controlplane/validate.go`, is pure, and is unit tested. Return the first error with the field name.

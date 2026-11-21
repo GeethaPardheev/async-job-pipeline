@@ -72,7 +72,17 @@ func run() int {
 	case config.ModeMigrate:
 		return 0
 	case config.ModeAPI:
-		err = controlplane.New(controlplane.Config{Port: cfg.Port, APIToken: cfg.APIToken, Version: version}, st, log).Run(ctx)
+		var reg *handlers.Registry
+		if reg, err = newRegistry(); err == nil {
+			err = controlplane.New(controlplane.Config{
+				Port:             cfg.Port,
+				APIToken:         cfg.APIToken,
+				Version:          version,
+				JobTypes:         reg.Names(),
+				WorkerStaleAfter: cfg.WorkerStaleAfter,
+				StatsWindow:      cfg.StatsWindow,
+			}, st, log).Run(ctx)
+		}
 	case config.ModeWorker:
 		err = runWorker(ctx, cfg, st, log)
 	}
@@ -84,10 +94,19 @@ func run() int {
 	return 0
 }
 
-func runWorker(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger) error {
+// newRegistry builds the handler registry; the API uses its names to validate submissions.
+func newRegistry() (*handlers.Registry, error) {
 	reg, err := handlers.Builtin(handlers.NewWebhookClient(), "jobq/"+version)
 	if err != nil {
-		return fmt.Errorf("build handler registry: %w", err)
+		return nil, fmt.Errorf("build handler registry: %w", err)
+	}
+	return reg, nil
+}
+
+func runWorker(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger) error {
+	reg, err := newRegistry()
+	if err != nil {
+		return err
 	}
 	host, err := os.Hostname()
 	if err != nil {

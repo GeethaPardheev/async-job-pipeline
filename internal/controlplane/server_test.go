@@ -31,7 +31,7 @@ func do(t *testing.T, h http.Handler, method, path, auth string) *httptest.Respo
 }
 
 func TestHealthEndpointsBypassAuth(t *testing.T) {
-	s := New(Config{APIToken: "s3cret"}, fakePinger{}, discardLogger())
+	s := newServer(Config{APIToken: "s3cret"}, fakePinger{}, nil, discardLogger())
 	s.ready.Store(true)
 	h := s.Handler()
 
@@ -43,11 +43,11 @@ func TestHealthEndpointsBypassAuth(t *testing.T) {
 }
 
 func TestV1RequiresToken(t *testing.T) {
-	s := New(Config{APIToken: "s3cret"}, fakePinger{}, discardLogger())
+	s := newServer(Config{APIToken: "s3cret"}, fakePinger{}, nil, discardLogger())
 	h := s.Handler()
 
 	for _, auth := range []string{"", "Bearer wrong", "s3cret", "Basic s3cret"} {
-		rec := do(t, h, http.MethodGet, "/v1/jobs", auth)
+		rec := do(t, h, http.MethodGet, "/v1/__nope", auth)
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("auth %q = %d, want 401", auth, rec.Code)
 		}
@@ -56,33 +56,33 @@ func TestV1RequiresToken(t *testing.T) {
 			t.Fatalf("bad 401 envelope %q: %v", rec.Body, err)
 		}
 	}
-	if rec := do(t, h, http.MethodGet, "/v1/jobs", "Bearer s3cret"); rec.Code == http.StatusUnauthorized {
+	if rec := do(t, h, http.MethodGet, "/v1/__nope", "Bearer s3cret"); rec.Code == http.StatusUnauthorized {
 		t.Fatalf("valid token rejected")
 	}
 }
 
 func TestNoTokenConfiguredMeansOpen(t *testing.T) {
-	h := New(Config{}, fakePinger{}, discardLogger()).Handler()
-	if rec := do(t, h, http.MethodGet, "/v1/jobs", ""); rec.Code == http.StatusUnauthorized {
+	h := newServer(Config{}, fakePinger{}, nil, discardLogger()).Handler()
+	if rec := do(t, h, http.MethodGet, "/v1/__nope", ""); rec.Code == http.StatusUnauthorized {
 		t.Fatalf("auth enforced without API_TOKEN")
 	}
 }
 
 func TestReadyz(t *testing.T) {
-	s := New(Config{}, fakePinger{err: errors.New("down")}, discardLogger())
+	s := newServer(Config{}, fakePinger{err: errors.New("down")}, nil, discardLogger())
 	s.ready.Store(true)
 	if rec := do(t, s.Handler(), http.MethodGet, "/readyz", ""); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("readyz with failing db = %d, want 503", rec.Code)
 	}
 
-	s = New(Config{}, fakePinger{}, discardLogger())
+	s = newServer(Config{}, fakePinger{}, nil, discardLogger())
 	if rec := do(t, s.Handler(), http.MethodGet, "/readyz", ""); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("readyz before serving = %d, want 503", rec.Code)
 	}
 }
 
 func TestRequestIDEchoed(t *testing.T) {
-	h := New(Config{}, fakePinger{}, discardLogger()).Handler()
+	h := newServer(Config{}, fakePinger{}, nil, discardLogger()).Handler()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	req.Header.Set("X-Request-ID", "abc-123")
 	rec := httptest.NewRecorder()
@@ -100,7 +100,7 @@ func TestServeGracefulShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Config{}, fakePinger{}, discardLogger())
+	s := newServer(Config{}, fakePinger{}, nil, discardLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Serve(ctx, ln) }()

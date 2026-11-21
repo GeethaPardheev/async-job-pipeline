@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/GeethaPardheev/async-job-pipeline/internal/store"
 )
 
 // Pinger is the readiness dependency.
@@ -19,28 +21,45 @@ type Pinger interface {
 
 // Config holds API-process settings.
 type Config struct {
-	Port     int
-	APIToken string
-	Version  string
+	Port             int
+	APIToken         string
+	Version          string
+	JobTypes         []string // registered handler names accepted by POST /v1/jobs and schedules
+	WorkerStaleAfter time.Duration
+	StatsWindow      time.Duration
 }
 
 // Server is the control-plane HTTP server.
 type Server struct {
-	cfg   Config
-	db    Pinger
-	log   *slog.Logger
-	mux   *http.ServeMux
-	ready atomic.Bool
+	cfg      Config
+	db       Pinger
+	st       *store.Store
+	log      *slog.Logger
+	mux      *http.ServeMux
+	jobTypes map[string]bool
+	reqs     *requestCounter
+	ready    atomic.Bool
 }
 
 const (
 	readyzTimeout   = 2 * time.Second
+	metricsTimeout  = 3 * time.Second
 	shutdownTimeout = 15 * time.Second
 )
 
 // New builds the server and registers routes.
-func New(cfg Config, db Pinger, log *slog.Logger) *Server {
-	s := &Server{cfg: cfg, db: db, log: log, mux: http.NewServeMux()}
+func New(cfg Config, st *store.Store, log *slog.Logger) *Server {
+	return newServer(cfg, st, st, log)
+}
+
+func newServer(cfg Config, db Pinger, st *store.Store, log *slog.Logger) *Server {
+	s := &Server{
+		cfg: cfg, db: db, st: st, log: log, mux: http.NewServeMux(),
+		jobTypes: make(map[string]bool, len(cfg.JobTypes)), reqs: newRequestCounter(),
+	}
+	for _, t := range cfg.JobTypes {
+		s.jobTypes[t] = true
+	}
 	s.routes()
 	return s
 }
@@ -48,14 +67,32 @@ func New(cfg Config, db Pinger, log *slog.Logger) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
+
+	s.mux.HandleFunc("POST /v1/jobs", s.handleSubmitJob)
+	s.mux.HandleFunc("GET /v1/jobs", s.handleListJobs)
+	s.mux.HandleFunc("GET /v1/jobs/{id}", s.handleGetJob)
+	s.mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.handleCancelJob)
+
+	s.mux.HandleFunc("GET /v1/dlq", s.handleListDLQ)
+	s.mux.HandleFunc("POST /v1/dlq/{id}/replay", s.handleReplayDLQ)
+
+	s.mux.HandleFunc("POST /v1/queue/drain", s.handleDrain)
+	s.mux.HandleFunc("POST /v1/queue/resume", s.handleResume)
+	s.mux.HandleFunc("GET /v1/queue/stats", s.handleStats)
+
+	s.mux.HandleFunc("POST /v1/schedules", s.handleCreateSchedule)
+	s.mux.HandleFunc("GET /v1/schedules", s.handleListSchedules)
+	s.mux.HandleFunc("DELETE /v1/schedules/{id}", s.handleDeleteSchedule)
 }
 
-// Handler returns the full middleware chain around the router.
+// Handler returns the full middleware chain around the router:
+// request-ID → panic recover → access log → bearer auth → body limit → router.
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
 	h = limitBody(h)
 	h = requireToken(s.log, s.cfg.APIToken, h)
-	h = accessLog(s.log, s.mux, h)
+	h = accessLog(s.log, s.mux, s.reqs, h)
 	h = recoverPanics(s.log, h)
 	h = requestID(s.log, h)
 	return h
@@ -85,7 +122,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
 	s.ready.Store(true)
-	s.log.Info("api listening", "addr", ln.Addr().String(), "auth", s.cfg.APIToken != "")
+	s.log.Info("api listening", "addr", ln.Addr().String(), "auth", s.cfg.APIToken != "", "job_types", s.cfg.JobTypes)
 
 	select {
 	case err := <-errCh:

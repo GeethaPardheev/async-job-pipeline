@@ -490,7 +490,7 @@ Clears `draining` and `drain_mode`. `200 {"draining":false}`.
   },
   "active_workers": 2, "total_concurrency": 16, "active_jobs": 4, "worker_utilization": 0.25,
   "p50_latency_ms": 41.0, "p95_latency_ms": 2210.5,
-  "dead_letter_rate": 0.002
+  "dead_letter_rate": 0.002, "dead_letter_count": 2
 }
 ```
 
@@ -499,6 +499,8 @@ Definitions:
 - `worker_utilization = active_jobs / total_concurrency` (0 when no workers).
 - `p50/p95_latency_ms`: `percentile_cont(0.5|0.95) WITHIN GROUP (ORDER BY duration_ms)` over `job_attempts` finished within `STATS_WINDOW` (5m). This is **attempt execution latency**. `null` when there's no data.
 - `dead_letter_rate`: `dead-lettered / (succeeded + failed + dead-lettered)` over jobs with `finished_at` within `STATS_WINDOW`. `0` when there's no data.
+- `dead_letter_count`: total rows in `dead_letter_jobs` (replayed or not).
+- Store errors that are deadline-exceeded or connection failures map to `503 unavailable`; anything else unexpected is `500 internal` (logged, never leaked).
 
 ### 8.10 `GET /metrics` (Prometheus text, `text/plain; version=0.0.4`)
 
@@ -515,6 +517,7 @@ jobq_worker_utilization 0.25
 jobq_attempt_latency_ms{quantile="0.5"} 41
 jobq_attempt_latency_ms{quantile="0.95"} 2210.5
 jobq_dead_letter_rate 0.002
+jobq_dead_letter_jobs 2                             # gauge, rows in dead_letter_jobs
 jobq_attempts_window{status="fenced"} 0             # attempts finished in window, by status
 jobq_draining 0
 jobq_http_requests_total{method="POST",route="/v1/jobs",code="202"} 123   # counter (API process)
