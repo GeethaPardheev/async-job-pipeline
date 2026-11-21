@@ -1,0 +1,82 @@
+# DigitalOcean App Platform spec. One image, two independently scaled components.
+# No secrets live here: API_TOKEN is injected at deploy time as an encrypted SECRET env.
+# The worker uses apps-s-1vcpu-1gb because every basic size is single_instance_only
+# and cannot run instance_count > 1.
+name: async-job-pipeline
+region: blr
+
+services:
+  - name: api
+    git:
+      repo_clone_url: https://github.com/GeethaPardheev/async-job-pipeline.git
+      branch: main
+    dockerfile_path: Dockerfile
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    http_port: 8080
+    health_check:
+      http_path: /readyz
+      initial_delay_seconds: 10
+      period_seconds: 10
+      timeout_seconds: 3
+      failure_threshold: 3
+    envs:
+      - key: MODE
+        value: api
+        scope: RUN_TIME
+      - key: DATABASE_URL
+        value: ${db.DATABASE_URL}
+        scope: RUN_TIME
+      - key: DB_MAX_CONNS
+        value: "8"
+        scope: RUN_TIME
+      - key: MIGRATE_ON_START
+        value: "true"
+        scope: RUN_TIME
+      - key: LOG_LEVEL
+        value: info
+        scope: RUN_TIME
+
+workers:
+  - name: worker
+    git:
+      repo_clone_url: https://github.com/GeethaPardheev/async-job-pipeline.git
+      branch: main
+    dockerfile_path: Dockerfile
+    instance_count: 2
+    instance_size_slug: apps-s-1vcpu-1gb
+    termination:
+      grace_period_seconds: 60
+    envs:
+      - key: MODE
+        value: worker
+        scope: RUN_TIME
+      - key: DATABASE_URL
+        value: ${db.DATABASE_URL}
+        scope: RUN_TIME
+      - key: DB_MAX_CONNS
+        value: "5"
+        scope: RUN_TIME
+      - key: MIGRATE_ON_START
+        value: "true"
+        scope: RUN_TIME
+      - key: SHUTDOWN_TIMEOUT
+        value: 25s
+        scope: RUN_TIME
+      - key: LOG_LEVEL
+        value: info
+        scope: RUN_TIME
+
+databases:
+  - name: db
+    engine: PG
+    version: "18"
+    production: false
+
+ingress:
+  rules:
+    - component:
+        name: api
+      match:
+        path:
+          prefix: /
