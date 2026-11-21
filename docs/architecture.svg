@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1110" viewBox="0 0 1500 1110" font-family="Helvetica, Arial, sans-serif">
+  <title>Async Job Processing Pipeline: production architecture on DigitalOcean App Platform</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b45309"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+    <style>
+      .h1 { font-size: 22px; font-weight: 700; fill: #0f172a; }
+      .h2 { font-size: 17px; font-weight: 700; fill: #0f172a; }
+      .sub { font-size: 13px; fill: #334155; }
+      .item { font-size: 13.5px; font-weight: 700; fill: #0f172a; }
+      .note { font-size: 12px; fill: #334155; }
+      .lbl { font-size: 12px; font-weight: 700; fill: #1e293b; }
+      .legend { font-size: 12.5px; fill: #0f172a; }
+      .ibox { fill: #ffffff; stroke: #94a3b8; stroke-width: 1; }
+      .line { stroke: #334155; stroke-width: 1.8; fill: none; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1500" height="1110" fill="#f8fafc"/>
+  <text x="40" y="44" class="h1">Async Job Processing Pipeline: one Go binary, MODE=api | MODE=worker, Postgres as the queue</text>
+
+  <!-- Top row: client and edge -->
+  <rect x="40" y="70" width="420" height="64" rx="10" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>
+  <text x="60" y="97" class="item">Client · curl · scripts/smoke_test.sh</text>
+  <text x="60" y="118" class="note">Authorization: Bearer $API_TOKEN on /v1/*</text>
+
+  <rect x="540" y="70" width="920" height="64" rx="10" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>
+  <text x="560" y="97" class="item">DigitalOcean App Platform edge (Cloudflare) · region blr</text>
+  <text x="560" y="118" class="note">https://async-job-pipeline-m6rfs.ondigitalocean.app  ·  routes / to api:8080  ·  origin 503 is rewritten to 504 (x-do-orig-status: 503)</text>
+
+  <line x1="460" y1="102" x2="536" y2="102" class="line" marker-end="url(#arrow)"/>
+  <text x="474" y="94" class="lbl">HTTPS</text>
+  <path d="M700,134 V165 H250 V196" class="line" marker-end="url(#arrow)"/>
+  <text x="470" y="158" class="lbl">HTTPS → :8080</text>
+
+  <!-- Control plane -->
+  <rect x="40" y="200" width="420" height="520" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <text x="60" y="230" class="h2">Control Plane · MODE=api</text>
+  <text x="60" y="252" class="sub">apps-s-1vcpu-0.5gb · 1 instance · pgxpool max 8</text>
+  <rect x="60" y="296" width="380" height="48" rx="7" class="ibox"/>
+  <text x="74" y="315" class="item">Bearer auth on /v1/*</text>
+  <text x="74" y="334" class="note">constant-time compare; 401 otherwise</text>
+  <rect x="60" y="354" width="380" height="48" rx="7" class="ibox"/>
+  <text x="74" y="373" class="item">Open probes: /healthz · /readyz · /metrics</text>
+  <text x="74" y="392" class="note">never behind auth (App Platform health checks)</text>
+  <rect x="60" y="412" width="380" height="48" rx="7" class="ibox"/>
+  <text x="74" y="431" class="item">POST /v1/jobs</text>
+  <text x="74" y="450" class="note">Idempotency-Key + SHA-256 body hash → 202 / 200 / 409</text>
+  <rect x="60" y="470" width="380" height="48" rx="7" class="ibox"/>
+  <text x="74" y="489" class="item">Job status · DLQ list · DLQ replay</text>
+  <text x="74" y="508" class="note">/v1/jobs/{id} · /v1/dlq · /v1/dlq/{id}/replay</text>
+  <rect x="60" y="528" width="380" height="48" rx="7" class="ibox"/>
+  <text x="74" y="547" class="item">Cancel · Drain · Resume</text>
+  <text x="74" y="566" class="note">writes queue_state (pause | cancel_pending)</text>
+  <rect x="60" y="586" width="380" height="48" rx="7" class="ibox"/>
+  <text x="74" y="605" class="item">Cron schedules</text>
+  <text x="74" y="624" class="note">POST / GET / DELETE /v1/schedules</text>
+  <rect x="60" y="644" width="380" height="48" rx="7" class="ibox"/>
+  <text x="74" y="663" class="item">Queue stats + Prometheus text</text>
+  <text x="74" y="682" class="note">REPEATABLE READ snapshot: depth, p50/p95, DLQ</text>
+
+  <!-- Postgres -->
+  <rect x="540" y="200" width="420" height="520" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="560" y="230" class="h2">Single Source of Truth · PostgreSQL 18</text>
+  <text x="560" y="252" class="sub">DigitalOcean Dev Database · public schema · TLS</text>
+  <rect x="560" y="296" width="380" height="48" rx="7" class="ibox"/>
+  <text x="574" y="315" class="item">jobs</text>
+  <text x="574" y="334" class="note">partial indexes: claim (queued) + lease (running)</text>
+  <rect x="560" y="354" width="380" height="48" rx="7" class="ibox"/>
+  <text x="574" y="373" class="item">job_attempts</text>
+  <text x="574" y="392" class="note">attempt audit: timed_out / lease_expired / fenced</text>
+  <rect x="560" y="412" width="380" height="48" rx="7" class="ibox"/>
+  <text x="574" y="431" class="item">dead_letter_jobs</text>
+  <text x="574" y="450" class="note">job snapshot + replayed_at / replay_job_id</text>
+  <rect x="560" y="470" width="380" height="48" rx="7" class="ibox"/>
+  <text x="574" y="489" class="item">queue_state</text>
+  <text x="574" y="508" class="note">singleton: draining flag + drain_mode</text>
+  <rect x="560" y="528" width="380" height="48" rx="7" class="ibox"/>
+  <text x="574" y="547" class="item">workers</text>
+  <text x="574" y="566" class="note">heartbeats: status, concurrency, active_jobs</text>
+  <rect x="560" y="586" width="380" height="48" rx="7" class="ibox"/>
+  <text x="574" y="605" class="item">schedules</text>
+  <text x="574" y="624" class="note">cron_expr, next_run_at (partial due index)</text>
+  <text x="560" y="672" class="note">All timestamps come from now() in Postgres.</text>
+  <text x="560" y="692" class="note">Migrations run under a per-schema advisory lock.</text>
+
+  <!-- Data plane -->
+  <rect x="1040" y="200" width="420" height="520" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+  <text x="1060" y="230" class="h2">Data Plane · MODE=worker</text>
+  <text x="1060" y="252" class="sub">apps-s-1vcpu-1gb · scaled 2 → 3 · pgxpool max 5 each</text>
+  <rect x="1060" y="296" width="380" height="48" rx="7" class="ibox"/>
+  <text x="1074" y="315" class="item">Poller: FOR UPDATE SKIP LOCKED</text>
+  <text x="1074" y="334" class="note">batch claim by priority, run_at, created_at</text>
+  <rect x="1060" y="354" width="380" height="48" rx="7" class="ibox"/>
+  <text x="1074" y="373" class="item">Bounded worker pool</text>
+  <text x="1074" y="392" class="note">8 per worker → 16 total (2 inst) → 24 total (3 inst)</text>
+  <rect x="1060" y="412" width="380" height="48" rx="7" class="ibox"/>
+  <text x="1074" y="431" class="item">Executor</text>
+  <text x="1074" y="450" class="note">timeout · panic recovery · 250ms abandon guard</text>
+  <rect x="1060" y="470" width="380" height="48" rx="7" class="ibox"/>
+  <text x="1074" y="489" class="item">Pluggable handlers</text>
+  <text x="1074" y="508" class="note">echo · sleep · flaky · always/permanent_fail · webhook</text>
+  <rect x="1060" y="528" width="380" height="48" rx="7" class="ibox"/>
+  <text x="1074" y="547" class="item">Lease reaper</text>
+  <text x="1074" y="566" class="note">expired lease → re-queued or dead-lettered</text>
+  <rect x="1060" y="586" width="380" height="48" rx="7" class="ibox"/>
+  <text x="1074" y="605" class="item">Heartbeat loop</text>
+  <text x="1074" y="624" class="note">every 5s: status, concurrency, active_jobs</text>
+  <rect x="1060" y="644" width="380" height="48" rx="7" class="ibox"/>
+  <text x="1074" y="663" class="item">Leaderless cron tick</text>
+  <text x="1074" y="682" class="note">SKIP LOCKED row + key cron:&lt;schedule_id&gt;:&lt;unix&gt;</text>
+
+  <!-- Panel connectors -->
+  <line x1="464" y1="436" x2="536" y2="436" class="line" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="474" y="426" class="lbl">SQL ≤ 8</text>
+  <line x1="964" y1="436" x2="1036" y2="436" class="line" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="966" y="426" class="lbl">SQL ≤ 5/w</text>
+
+  <!-- Lifecycle -->
+  <rect x="40" y="750" width="1420" height="330" rx="12" fill="#ffffff" stroke="#475569" stroke-width="1.5"/>
+  <text x="60" y="778" class="h2">Job lifecycle (statuses are exact)</text>
+
+  <rect x="80" y="860" width="150" height="44" rx="8" fill="#e0f2fe" stroke="#0369a1" stroke-width="1.5"/>
+  <text x="155" y="887" class="item" text-anchor="middle">queued</text>
+  <rect x="380" y="860" width="150" height="44" rx="8" fill="#e0f2fe" stroke="#0369a1" stroke-width="1.5"/>
+  <text x="455" y="887" class="item" text-anchor="middle">running</text>
+  <rect x="680" y="860" width="170" height="44" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+  <text x="765" y="887" class="item" text-anchor="middle">succeeded</text>
+
+  <rect x="80" y="985" width="150" height="48" rx="8" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>
+  <text x="155" y="1014" class="item" text-anchor="middle">cancelled</text>
+  <rect x="380" y="985" width="150" height="48" rx="8" fill="#fee2e2" stroke="#b91c1c" stroke-width="1.5"/>
+  <text x="455" y="1014" class="item" text-anchor="middle">failed</text>
+  <rect x="680" y="985" width="170" height="48" rx="8" fill="#fee2e2" stroke="#b91c1c" stroke-width="1.5"/>
+  <text x="765" y="1014" class="item" text-anchor="middle">dead-lettered</text>
+  <rect x="900" y="985" width="190" height="48" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="1.5"/>
+  <text x="995" y="1014" class="item" text-anchor="middle">dead_letter_jobs</text>
+  <rect x="1130" y="985" width="320" height="48" rx="8" fill="#e0f2fe" stroke="#0369a1" stroke-width="1.5"/>
+  <text x="1290" y="1005" class="item" text-anchor="middle">replay → new job (queued)</text>
+  <text x="1290" y="1024" class="note" text-anchor="middle">POST /v1/dlq/{id}/replay (idempotent)</text>
+
+  <line x1="230" y1="882" x2="376" y2="882" stroke="#15803d" stroke-width="2.2" marker-end="url(#arrow-green)"/>
+  <text x="262" y="874" class="lbl">claim</text>
+  <line x1="530" y1="882" x2="676" y2="882" stroke="#15803d" stroke-width="2.2" marker-end="url(#arrow-green)"/>
+  <text x="560" y="874" class="lbl">success</text>
+
+  <path d="M440,860 C440,820 170,820 170,856" stroke="#b45309" stroke-width="2" fill="none" marker-end="url(#arrow-amber)"/>
+  <text x="290" y="823" class="lbl">(1)</text>
+  <path d="M470,860 C470,785 140,785 140,856" stroke="#b45309" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#arrow-amber)"/>
+  <text x="290" y="797" class="lbl">(2)</text>
+
+  <line x1="155" y1="904" x2="155" y2="981" class="line" marker-end="url(#arrow)"/>
+  <text x="165" y="948" class="lbl">(5)</text>
+  <line x1="455" y1="904" x2="455" y2="981" stroke="#b91c1c" stroke-width="2" marker-end="url(#arrow-red)"/>
+  <text x="465" y="948" class="lbl">(3)</text>
+  <line x1="505" y1="904" x2="725" y2="982" stroke="#b91c1c" stroke-width="2" marker-end="url(#arrow-red)"/>
+  <text x="612" y="932" class="lbl">(4)</text>
+  <line x1="850" y1="1009" x2="896" y2="1009" class="line" marker-end="url(#arrow)"/>
+  <line x1="1090" y1="1009" x2="1126" y2="1009" class="line" marker-end="url(#arrow)"/>
+
+  <text x="990" y="812" class="legend" font-weight="700" fill="#15803d">Happy path: queued → running → succeeded</text>
+  <text x="990" y="831" class="legend">(1) transient error / timeout → re-queued with backoff</text>
+  <text x="990" y="850" class="legend">      d + U[0,d),  d = min(cap, base · 2^(attempt−1))</text>
+  <text x="990" y="869" class="legend">(2) lease expired → reaper → re-queued or dead-lettered</text>
+  <text x="990" y="888" class="legend">(3) permanent error → failed (never retried)</text>
+  <text x="990" y="907" class="legend">(4) retries exhausted → dead-lettered → dead_letter_jobs</text>
+  <text x="990" y="926" class="legend">(5) cancel while queued → cancelled</text>
+  <text x="990" y="945" class="legend">Fence: every running→* write matches (id, status=running,</text>
+  <text x="990" y="964" class="legend">      attempt_count, worker_id); 0 rows → ErrFenceLost</text>
+</svg>
