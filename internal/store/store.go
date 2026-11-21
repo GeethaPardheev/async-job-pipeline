@@ -15,7 +15,7 @@ import (
 // Sentinel errors returned by store methods.
 var (
 	ErrNotFound            = errors.New("not found")
-	ErrFenced              = errors.New("fenced: stale attempt rejected")
+	ErrFenceLost           = errors.New("fence lost: job is no longer owned by this attempt")
 	ErrConflict            = errors.New("conflict")
 	ErrIdempotencyConflict = errors.New("idempotency key reused with a different request")
 	ErrDraining            = errors.New("queue is draining")

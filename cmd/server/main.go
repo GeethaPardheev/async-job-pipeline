@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 	"github.com/GeethaPardheev/async-job-pipeline/internal/config"
 	"github.com/GeethaPardheev/async-job-pipeline/internal/controlplane"
 	"github.com/GeethaPardheev/async-job-pipeline/internal/dataplane"
+	"github.com/GeethaPardheev/async-job-pipeline/internal/dataplane/handlers"
 	"github.com/GeethaPardheev/async-job-pipeline/internal/store"
 )
 
@@ -72,7 +74,7 @@ func run() int {
 	case config.ModeAPI:
 		err = controlplane.New(controlplane.Config{Port: cfg.Port, APIToken: cfg.APIToken, Version: version}, st, log).Run(ctx)
 	case config.ModeWorker:
-		err = dataplane.New(dataplane.Config{WorkerID: cfg.WorkerID, Concurrency: cfg.WorkerConcurrency, Version: version}, log).Run(ctx)
+		err = runWorker(ctx, cfg, st, log)
 	}
 	if err != nil {
 		log.Error("exited with error", "err", err)
@@ -80,4 +82,30 @@ func run() int {
 	}
 	log.Info("shutdown complete")
 	return 0
+}
+
+func runWorker(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger) error {
+	reg, err := handlers.Builtin(handlers.NewWebhookClient(), "jobq/"+version)
+	if err != nil {
+		return fmt.Errorf("build handler registry: %w", err)
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("hostname: %w", err)
+	}
+	return dataplane.New(dataplane.Config{
+		WorkerID:          cfg.WorkerID,
+		Hostname:          host,
+		Version:           version,
+		Concurrency:       cfg.WorkerConcurrency,
+		ClaimBatchSize:    cfg.ClaimBatchSize,
+		PollInterval:      cfg.PollInterval,
+		LeaseGrace:        cfg.LeaseGrace,
+		ReaperInterval:    cfg.ReaperInterval,
+		ReaperBatch:       cfg.ReaperBatch,
+		HeartbeatInterval: cfg.HeartbeatInterval,
+		CronTickInterval:  cfg.CronTickInterval,
+		ShutdownTimeout:   cfg.ShutdownTimeout,
+		Backoff:           dataplane.Backoff{Base: cfg.BackoffBase, Cap: cfg.BackoffCap},
+	}, st, reg, log).Run(ctx)
 }

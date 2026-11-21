@@ -15,7 +15,7 @@ import (
 var expectedTables = []string{"queue_state", "schedules", "jobs", "job_attempts", "dead_letter_jobs", "workers", "schema_migrations"}
 
 var expectedIndexes = []string{
-	"jobs_claim_idx", "jobs_lease_idx", "jobs_status_created_idx", "jobs_finished_idx",
+	"jobs_claim_order_idx", "jobs_lease_idx", "jobs_status_created_idx", "jobs_finished_idx",
 	"job_attempts_finished_idx", "dead_letter_jobs_at_idx", "schedules_due_idx", "workers_heartbeat_idx",
 }
 

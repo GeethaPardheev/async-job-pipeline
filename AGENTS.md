@@ -58,7 +58,7 @@ Rules for any human or AI agent changing this repo. `SPEC.md` is the contract an
 
 - Never `_ = f()` or ignore a returned `error`. The only exceptions are `defer resp.Body.Close()` and `defer rows.Close()` (pgx `Rows.Close` returns nothing). Anything else that's ignored must be logged with the reason.
 - Wrap errors with context: `fmt.Errorf("claim jobs: %w", err)`. Compare with `errors.Is` / `errors.As`, never by string matching.
-- Sentinel errors: `domain.ErrPermanent`, `store.ErrNotFound`, `store.ErrFenced`, `store.ErrIdempotencyConflict`, `store.ErrConflict`, `store.ErrDraining`. Handlers map them to HTTP codes in **one** function.
+- Sentinel errors: `domain.ErrPermanent`, `store.ErrNotFound`, `store.ErrFenceLost`, `store.ErrIdempotencyConflict`, `store.ErrConflict`, `store.ErrDraining`. Handlers map them to HTTP codes in **one** function.
 - Map `pgx.ErrNoRows` to `store.ErrNotFound` inside `store`. Detect unique violations with `pgconn.PgError.Code == "23505"`.
 - Transactions use a single `store.withTx(ctx, fn)` helper built on `pgx.BeginTxFunc`, which commits on nil and rolls back otherwise. No hand-rolled `Begin`/`Commit`.
 - No `panic` outside `main` init failures. The HTTP middleware and the executor both `recover()`, log with a stack trace, and convert to an error.
@@ -68,7 +68,7 @@ Rules for any human or AI agent changing this repo. `SPEC.md` is the contract an
 ## 5. SQL Rules (atomic, fenced)
 
 1. **Every state transition is one statement or one `withTx`.** Never SELECT-then-UPDATE without `FOR UPDATE`.
-2. **Every worker-originated `UPDATE jobs`** includes `WHERE id=$1 AND status='running' AND attempt_count=$2 AND worker_id=$3`, and checks `CommandTag.RowsAffected()`. 0 rows → `store.ErrFenced` (and the attempt row is marked `fenced`, SPEC §6.5). The only exception is the reaper, which uses the locked row's own token.
+2. **Every worker-originated `UPDATE jobs`** includes `WHERE id=$1 AND status='running' AND attempt_count=$2 AND worker_id=$3`, and checks `CommandTag.RowsAffected()`. 0 rows → `store.ErrFenceLost` (and the attempt row is marked `fenced`, SPEC §6.5). The only exception is the reaper, which uses the locked row's own token.
 3. Retry vs dead-letter guards (`attempt_count <= max_retries` / `> max_retries`) live **in SQL**, not only in Go.
 4. Dead-lettering updates `jobs` and inserts `dead_letter_jobs` in one CTE statement (SPEC §6.4).
 5. Claims, reaping, and cron ticks use `FOR UPDATE … SKIP LOCKED` with a `LIMIT`. Never use unbounded scans on hot paths.

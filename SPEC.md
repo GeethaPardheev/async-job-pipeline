@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 -- Hot path: claim. Partial so it only holds queued rows; matches the ORDER BY of the claim query exactly.
-CREATE INDEX IF NOT EXISTS jobs_claim_idx   ON jobs (priority DESC, run_at, id) WHERE status = 'queued';
+CREATE INDEX IF NOT EXISTS jobs_claim_order_idx ON jobs (priority DESC, run_at, created_at, id) WHERE status = 'queued';  -- 0002 replaced 0001's jobs_claim_idx
 -- Reaper: only running rows, ordered by expiry.
 CREATE INDEX IF NOT EXISTS jobs_lease_idx   ON jobs (lease_expires_at)          WHERE status = 'running';
 -- GET /v1/jobs?status=… and per-status counts.
@@ -262,7 +262,7 @@ WITH cand AS (
   SELECT j.id FROM jobs j
   WHERE j.status = 'queued' AND j.run_at <= now()
     AND NOT (SELECT draining FROM queue_state WHERE id)
-  ORDER BY j.priority DESC, j.run_at, j.id
+  ORDER BY j.priority DESC, j.run_at, j.created_at, j.id
   LIMIT $1                                  -- min(free slots, CLAIM_BATCH_SIZE)
   FOR UPDATE OF j SKIP LOCKED
 ), claimed AS (
@@ -322,7 +322,7 @@ RETURNING job_id;
 
 If a fenced `UPDATE jobs` affects 0 rows, the worker does **not** touch `jobs`. In the same tx it runs
 `UPDATE job_attempts SET status='fenced', error='stale attempt rejected: <outcome>', finished_at=now(), duration_ms=$d WHERE job_id=$1 AND attempt_number=$2 AND worker_id=$3 AND status IN ('running','lease_expired')`,
-commits, and returns `store.ErrFenced`. The data plane logs this at WARN level. Each `fenced` row is evidence that a handler ran twice.
+commits, and returns `store.ErrFenceLost`. The data plane logs this at WARN level. Each `fenced` row is evidence that a handler ran twice.
 
 ### 6.6 Lease reaper — tx, batch ≤ `REAPER_BATCH` (100)
 
@@ -370,7 +370,7 @@ The draining check (`SELECT draining FROM queue_state`) runs first. A submit tha
 | ID | Invariant | Mechanism | Test |
 |---|---|---|---|
 | I1 | A queued job is claimed by at most one worker per attempt | single-statement claim with `FOR UPDATE OF j SKIP LOCKED`; `UNIQUE(job_id, attempt_number)` | 8 workers × concurrency 8, 500 jobs → exactly 500 attempt rows, each job `attempt_count=1` |
-| I2 | A stale worker can never change a job it no longer owns | every worker write fenced on `(id, status='running', attempt_count, worker_id)`; `RowsAffected` checked | zombie test: A claims, lease expires, reaper requeues, B claims; A's success → `ErrFenced`, B's wins |
+| I2 | A stale worker can never change a job it no longer owns | every worker write fenced on `(id, status='running', attempt_count, worker_id)`; `RowsAffected` checked | zombie test: A claims, lease expires, reaper requeues, B claims; A's success → `ErrFenceLost`, B's wins |
 | I3 | A healthy worker always finishes before its lease expires | `lease = timeout_seconds + LEASE_GRACE` (30s) and executor deadline = `timeout_seconds`; no DB conn held during execution | reaper test only reaps leases that are actually expired |
 | I4 | `dead-lettered` ⇔ a `dead_letter_jobs` row exists | single-statement CTE (6.4) | after the DLQ test: `count(status='dead-lettered') = count(dead_letter_jobs)` |
 | I5 | Attempts never exceed `1 + max_retries` | SQL guards on T5/T6 + `CHECK (attempt_count <= max_retries + 1)` | always_fail with `max_retries=2` → exactly 3 attempts |
