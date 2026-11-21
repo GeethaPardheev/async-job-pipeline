@@ -394,6 +394,8 @@ Base path `/v1`. JSON bodies only (`Content-Type: application/json`). Unknown fi
 
 Codes: `invalid_request` (400), `unknown_job_type` (400), `unauthorized` (401), `not_found` (404), `conflict` (409), `idempotency_key_conflict` (409), `queue_draining` (503, with `Retry-After: 30`), `unavailable` (503), `internal` (500).
 
+**DigitalOcean edge note:** App Platform's edge (Cloudflare) replaces every origin `503` with its own HTML page and status `504`. It keeps `Retry-After` and `X-Request-ID` and adds `x-do-orig-status: 503`, so clients behind it see `504` + `x-do-orig-status: 503` instead of the JSON envelope. The API still emits `503` per this spec (a deliberate decision). `scripts/smoke_test.sh` accepts either form for the drain check.
+
 ### 8.1 `POST /v1/jobs` — submit
 
 Headers: optional `Idempotency-Key` (1–255 printable ASCII; prefixes `cron:` and `dlq-replay:` are reserved → 400).
